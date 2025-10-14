@@ -19,12 +19,31 @@ def match_category(primary_cat, patterns):
     return any(fnmatch.fnmatch(primary_cat or "", pat) for pat in patterns)
 
 
-def score_paper(title, abstract, authors, prefs):
-    t = _normalize(title); a = _normalize(abstract)
+def score_paper(paper, prefs):
+    """
+    compute a relevance score for a paper entry (dict or arxiv.Result).
+    handles both new dict-style results and legacy arxiv.Result objects.
+    """
+
+    # extract fields safely
+    if isinstance(paper, dict):
+        title = paper.get("title", "")
+        abstract = paper.get("summary", paper.get("abstract", ""))
+        authors = paper.get("authors", [])
+    else:
+        # arxiv.Result object
+        title = getattr(paper, "title", "")
+        abstract = getattr(paper, "summary", getattr(paper, "abstract", ""))
+        authors = [a.name for a in getattr(paper, "authors", [])]
+
+    # normalize and combine text
+    t = _normalize(title)
+    a = _normalize(abstract)
     joined = f"{t} {a}"
-    any_kw = prefs.get("any_keywords", [])
-    all_kw = prefs.get("all_keywords", [])
-    ex_kw  = prefs.get("exclude_keywords", [])
+
+    any_kw  = prefs.get("any_keywords", [])
+    all_kw  = prefs.get("all_keywords", [])
+    ex_kw   = prefs.get("exclude_keywords", [])
     auth_wl = [s.lower() for s in prefs.get("authors", [])]
 
     score = 0.0
@@ -41,13 +60,13 @@ def score_paper(title, abstract, authors, prefs):
             score += 2.0
         details["all_ok"] = all_ok
 
-    # authors
+    # author matches
     al = [x.lower() for x in authors]
     auth_hits = sum(1 for wl in auth_wl if any(wl in au for au in al))
     score += auth_hits
     details["auth_hits"] = auth_hits
 
-    # excludes
+    # exclusions
     ex_hits = sum(1 for k in ex_kw if k.lower() in joined)
     if ex_hits:
         score -= 2.0 * ex_hits

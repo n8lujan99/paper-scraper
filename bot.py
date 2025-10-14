@@ -61,21 +61,29 @@ def fetch_recent(cfg):
     return results
 
 
-def curate(cfg, papers):
-    keep = []
-    for r in papers:
-        if not match_category(r.primary_category, cfg["arxiv"]["categories"]):
+def curate(cfg, results):
+    curated = []
+    for r in results:
+        # handle both arxiv.Result objects and dicts
+        category = None
+        if isinstance(r, dict):
+            category = cfg["arxiv"]["categories"][0] # dummy, since API doesn't return category
+        else:
+            category = getattr(r, "primary_category", None)
+
+        if not match_category(category, cfg["arxiv"]["categories"]):
             continue
-        score, details = score_paper(
-            title=r.title or "",
-            abstract=r.summary or "",
-            authors=[a.name for a in r.authors],
-            prefs=cfg["preferences"],
-        )
-        if score >= cfg["preferences"].get("min_score", 1.0):
-            keep.append((score, details, r))
-    keep.sort(key=lambda x: (-x[0],))
-    return keep
+
+        # adapt for dicts vs objects
+        if isinstance(r, dict):
+            score = score_paper(r["title"], r["summary"], r["authors"], cfg)
+        else:
+            score = score_paper(r.title, r.summary, [a.name for a in r.authors], cfg)
+
+        if score >= cfg["preferences"]["min_score"]:
+            curated.append(r)
+    print(f"[astro-ph bot] curated {len(curated)} papers")
+    return curated
 
 
 def format_authors(authors, max_authors=5):
