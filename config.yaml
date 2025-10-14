@@ -41,7 +41,8 @@ output:
   email:
     from_addr: "lizardtyphoon29@gmail.com"
     to_addrs:
-      - "lizardtyphoon29@gmail.com"
+      - "ajd96@proton.me"
+      - "ashton.davis3@my.utsa.edu"
     subject_prefix: "[astro-ph digest]"
     smtp_host: "smtp.gmail.com"
     smtp_port: 587

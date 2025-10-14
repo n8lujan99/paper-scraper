@@ -1,4 +1,4 @@
-import os, datetime as dt, arxiv, yaml
+import arxiv, yaml, datetime as dt
 from filters import score_paper, match_category
 from mailer import send_email
 from parsers import try_extract_conclusion
