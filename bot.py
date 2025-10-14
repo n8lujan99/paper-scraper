@@ -16,7 +16,7 @@ def build_search_query(cfg):
 
 
 def fetch_recent(cfg):
-    max_results = cfg["arxiv"].get("max_results", 200)
+    max_results = cfg["arxiv"].get("max_results", 50)
     search = arxiv.Search(
         query=build_search_query(cfg),
         max_results=max_results,
