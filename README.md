@@ -1,11 +1,4 @@
-astroph-bot/
-  bot.py                  # main entrypoint
-  filters.py              # matching & scoring
-  mailer.py               # email (SMTP)
-  parsers.py              # optional PDF "conclusion" extractor
-  config.example.yaml     # user-editable preferences
-  requirements.txt
-  README.md
+![Daily astro-ph Digest](https://github.com/<your-username>/astro-ph-digest-bot/actions/workflows/daily_digest.yml/badge.svg)
 
 
 astroph-bot/
@@ -17,4 +10,4 @@ astroph-bot/
  ├─ requirements.txt
  └─ .github/
      └─ workflows/
-         └─ daily_digest.yml   ← NEW
+         └─ daily_digest.yml

@@ -35,12 +35,12 @@ preferences:
 output:
   include_conclusion: true
   email:
-    from_addr: "you@gmail.com"
+    from_addr: "lizardtyphoon29@gmail.com"
     to_addrs:
-      - "you@gmail.com"
+      - "lizardtyphoon29@gmail.com"
     subject_prefix: "[astro-ph digest]"
     smtp_host: "smtp.gmail.com"
     smtp_port: 587
     use_starttls: true
-    username: "you@gmail.com"
+    username: "lizardtyphoon29@gmail.com"
     password_env: "ASTROPH_EMAIL_PASSWORD"

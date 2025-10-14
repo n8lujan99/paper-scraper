@@ -25,7 +25,7 @@ def fetch_recent(cfg):
     )
     results = list(arxiv.Client().results(search))
     days_back = cfg["arxiv"].get("days_back", 1)
-    since = dt.datetime.utcnow() - dt.timedelta(days=days_back)
+    since = dt.datetime.now(dt.timezone.utc) - dt.timedelta(days=days_back)
     return [r for r in results if (r.published or r.updated) >= since]
 
 
