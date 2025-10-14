@@ -18,33 +18,41 @@ def build_search_query(cfg):
 def fetch_recent(cfg):
     max_results = cfg["arxiv"].get("max_results", 50)
     query = build_search_query(cfg)
+    days_back = cfg["arxiv"].get("days_back", 1)
+    since = dt.datetime.now(dt.timezone.utc) - dt.timedelta(days=days_back)
+
     base = "https://export.arxiv.org/api/query"
     params = {
         "search_query": query,
         "sortBy": "submittedDate",
         "sortOrder": "descending",
         "max_results": str(max_results),
-        "start": "0"
+        "start": "0",
     }
-
-    # direct single-page request (no arxiv.Client pagination)
     url = base + "?" + "&".join(f"{k}={v}" for k, v in params.items())
-    resp = requests.get(url, timeout=30)
-    feed = feedparser.parse(resp.text)
 
+    try:
+        resp = requests.get(url, timeout=20)
+        resp.raise_for_status()
+    except Exception as e:
+        print(f"[ERROR] could not fetch from arXiv: {e}")
+        return []
+
+    feed = feedparser.parse(resp.text)
     results = []
     for entry in feed.entries:
-        results.append({
-            "title": entry.title,
-            "summary": entry.summary,
-            "published": dt.datetime.fromisoformat(entry.published.replace("Z", "+00:00")),
-            "link": entry.link,
-            "authors": [a.name for a in entry.authors],
-        })
-
-    days_back = cfg["arxiv"].get("days_back", 1)
-    since = dt.datetime.now(dt.timezone.utc) - dt.timedelta(days=days_back)
-    results = [r for r in results if r["published"] >= since]
+        try:
+            pub = dt.datetime.fromisoformat(entry.published.replace("Z", "+00:00"))
+        except Exception:
+            pub = dt.datetime.now(dt.timezone.utc)
+        if pub >= since:
+            results.append({
+                "title": entry.title.strip(),
+                "summary": entry.summary.strip(),
+                "published": pub,
+                "link": entry.link,
+                "authors": [a.name for a in entry.authors],
+            })
 
     print(f"[astro-ph bot] fetched {len(results)} papers (max {max_results})")
     return results
