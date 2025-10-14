@@ -1,0 +1,46 @@
+# config.yaml — your astro-ph bot settings
+
+arxiv:
+  categories:
+    - "astro-ph.GA"
+    - "astro-ph.CO"
+    - "astro-ph.HE"
+    - "astro-ph.IM"
+    - "astro-ph.SR"
+  max_results: 200
+  days_back: 1
+
+preferences:
+  any_keywords:
+    - Sgr A*
+    - M87*
+    - radiative transfer
+    - GRMHD
+    - magnetohydrodynamics
+    - EHT
+  all_keywords:
+    # e.g. require both terms together
+    - "black hole"
+  exclude_keywords:
+    - education
+    - calendar
+    - review
+    - tutorial
+  authors:
+    - "Anantua"
+    - "Curd"
+    - "Gußmann"
+  min_score: 2.0
+
+output:
+  include_conclusion: true
+  email:
+    from_addr: "you@gmail.com"
+    to_addrs:
+      - "you@gmail.com"
+    subject_prefix: "[astro-ph digest]"
+    smtp_host: "smtp.gmail.com"
+    smtp_port: 587
+    use_starttls: true
+    username: "you@gmail.com"
+    password_env: "ASTROPH_EMAIL_PASSWORD"

@@ -1,0 +1,35 @@
+# config.yaml
+arxiv:
+  categories: ["astro-ph*", "gr-qc"]   # glob OK -> astro-ph.CO, .GA, .HE, .IM, .SR, …
+  max_results: 200                     # cap per run
+  days_back: 1                         # search window
+
+preferences:
+  any_keywords:
+    - event horizon
+    - VLBI
+    - Sgr A*
+    - M87*
+    - jet launching
+  all_keywords:
+    - radiative transfer
+  authors:
+    - "Akiyama"
+    - "Anantua"
+    - "Gammie"
+  exclude_keywords:
+    - "education"       # quick negative filter
+    - "calendar"
+  min_score: 2.0
+
+output:
+  include_conclusion: true   # try to extract conclusion from PDF
+  email:
+    from_addr: "you@gmail.com"
+    to_addrs: ["you@gmail.com"]
+    subject_prefix: "[astro-ph bot]"
+    smtp_host: "smtp.gmail.com"
+    smtp_port: 587
+    use_starttls: true
+    username: "you@gmail.com"
+    password_env: "ASTROPH_EMAIL_PASSWORD"   # read from env var

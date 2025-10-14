@@ -1,0 +1,27 @@
+name: Daily astro-ph Digest
+
+on:
+  schedule:
+    # run every day at 13:00 UTC (≈ 8 AM US Central)
+    - cron: "0 13 * * *"
+  workflow_dispatch: # allows manual run from GitHub UI
+
+jobs:
+  run-digest:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run astro-ph bot
+        env:
+          ASTROPH_EMAIL_PASSWORD: ${{ secrets.ASTROPH_EMAIL_PASSWORD }}
+        run: python bot.py
