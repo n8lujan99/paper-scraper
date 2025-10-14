@@ -1,7 +1,10 @@
-import yaml, feedparser, requests, datetime as dt
+import os, yaml, feedparser, requests, datetime as dt
 from filters import score_paper, match_category
 from mailer import send_email
 from parsers import try_extract_conclusion
+
+
+print(f"[astro-ph bot] running: {__file__} SHA={os.environ.get('GITHUB_SHA', 'local')}")
 
 
 def load_config(path="config.yaml"):

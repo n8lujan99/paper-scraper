@@ -22,6 +22,11 @@ jobs:
         run: pip install -r requirements.txt
 
       - name: Run astro-ph bot
+        working-directory: paper_scraper/astroph-bot
         env:
           ASTROPH_EMAIL_PASSWORD: ${{ secrets.ASTROPH_EMAIL_PASSWORD }}
-        run: python bot.py
+        run: |
+          echo "Commit: $GITHUB_SHA"
+          echo "PWD: $(pwd)"
+          ls -l
+          python bot.py
