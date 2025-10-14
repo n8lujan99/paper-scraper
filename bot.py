@@ -63,25 +63,28 @@ def fetch_recent(cfg):
 
 def curate(cfg, results):
     curated = []
+    prefs = cfg["preferences"]
+
     for r in results:
-        # handle both arxiv.Result objects and dicts
-        category = None
+        # handle dicts vs arxiv.Result objects
         if isinstance(r, dict):
-            category = cfg["arxiv"]["categories"][0] # dummy, since API doesn't return category
+            category = cfg["arxiv"]["categories"][0] # dummy category
         else:
             category = getattr(r, "primary_category", None)
 
         if not match_category(category, cfg["arxiv"]["categories"]):
             continue
 
-        # adapt for dicts vs objects
-        if isinstance(r, dict):
-            score = score_paper(r["title"], r["summary"], r["authors"], cfg)
-        else:
-            score = score_paper(r.title, r.summary, [a.name for a in r.authors], cfg)
+        # unified scoring call
+        score, details = score_paper(r, prefs)
 
-        if score >= cfg["preferences"]["min_score"]:
-            curated.append(r)
+        if score >= prefs.get("min_score", 2.0):
+            curated.append({
+                "paper": r,
+                "score": score,
+                "details": details
+            })
+
     print(f"[astro-ph bot] curated {len(curated)} papers")
     return curated
 
