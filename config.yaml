@@ -2,8 +2,9 @@
 
 arxiv:
   categories:
-    - "astro-ph.GA"
     - "astro-ph.CO"
+    - "astro-ph.EP"
+    - "astro-ph.GA"
     - "astro-ph.HE"
     - "astro-ph.IM"
     - "astro-ph.SR"
@@ -14,13 +15,16 @@ preferences:
   any_keywords:
     - Sgr A*
     - M87*
-    - radiative transfer
+    - MHD
     - GRMHD
     - magnetohydrodynamics
     - EHT
   all_keywords:
     # e.g. require both terms together
     - "black hole"
+    - "event horizon"
+    - "radiative transfer"
+    - "general relativistic magnetohydrodynamics"
   exclude_keywords:
     - education
     - calendar
