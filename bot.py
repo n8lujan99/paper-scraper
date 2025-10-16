@@ -66,26 +66,41 @@ def curate(cfg, results):
     prefs = cfg["preferences"]
 
     for r in results:
-        # handle dicts vs arxiv.Result objects
-        if isinstance(r, dict):
-            category = cfg["arxiv"]["categories"][0] # dummy category
-        else:
-            category = getattr(r, "primary_category", None)
+        # extract core fields safely (works for dicts or arxiv.Result objects)
+        title = r.get("title") if isinstance(r, dict) else getattr(r, "title", "")
+        summary = r.get("summary") if isinstance(r, dict) else getattr(r, "summary", "")
+        authors = (
+            r.get("authors") if isinstance(r, dict)
+            else [a.name for a in getattr(r, "authors", [])]
+        )
+        url = r.get("url") if isinstance(r, dict) else getattr(r, "entry_id", "")
+        pdf_url = r.get("pdf_url") if isinstance(r, dict) else getattr(r, "pdf_url", "")
+        category = (
+            getattr(r, "primary_category", None)
+            if not isinstance(r, dict)
+            else cfg["arxiv"]["categories"][0]
+        )
 
+        # skip if category doesn’t match user’s config
         if not match_category(category, cfg["arxiv"]["categories"]):
             continue
 
-        # unified scoring call
-        score, details = score_paper(r, prefs)
+        # unified scoring
+        score, details = score_paper(title, summary, authors, prefs)
 
-        if score >= prefs.get("min_score", 2.0):
+        if score >= prefs.get("min_score", 1.0):
             curated.append({
-                "paper": r,
+                "title": title,
+                "summary": summary,
+                "authors": authors,
+                "url": url,
+                "pdf_url": pdf_url,
+                "category": category,
                 "score": score,
-                "details": details
+                "details": details,
             })
 
-    print(f"[astro-ph bot] curated {len(curated)} papers")
+    print(f"[astro-ph bot] curated {len(curated)} papers (score ≥ {prefs.get('min_score', 1.0)})")
     return curated
 
 
