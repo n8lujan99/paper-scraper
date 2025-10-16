@@ -118,7 +118,6 @@ def make_email_body(cfg, curated):
     lines_html = ['<html><body><h2>astro-ph digest</h2><ol>']
 
     for r in curated:
-        # safely extract fields (works for dicts or arxiv.Result objects)
         url = (
             r.get("url")
             or r.get("link")
@@ -130,12 +129,20 @@ def make_email_body(cfg, curated):
         authors = (r.get("authors") if isinstance(r, dict) else getattr(r, "authors", [])) or []
         authors_line = ", ".join(authors) if isinstance(authors, list) else str(authors)
 
-        # TEXT block
+        # fix invalid arxiv url handling
         if not url.startswith("http"):
             url = f"https://arxiv.org/abs/{url.strip()}"
+        elif "export.arxiv.org" in url:
+            # replace export.arxiv.org with canonical arxiv.org/abs/ID
+            parts = url.split("/")
+            arx_id = parts[-1]
+            if "." in arx_id or arx_id.isdigit():
+                url = f"https://arxiv.org/abs/{arx_id}"
+
+        # TEXT block
         lines_txt.append(f"{title}\n{url}\n")
         if authors_line:
-            lines_txt.append(f"authors: {authors_line}\n")
+            lines_txt.append(f"Authors: {authors_line}\n")
         lines_txt.append(abstract + "\n")
         lines_txt.append("-" * 60)
 
