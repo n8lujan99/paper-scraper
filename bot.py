@@ -107,17 +107,17 @@ def make_email_body(cfg, curated):
 
     for r in curated:
         # safely extract fields (works for dicts or arxiv.Result objects)
-        title = r.get("title") if isinstance(r, dict) else getattr(r, "title", "")
-        abstract = r.get("summary") if isinstance(r, dict) else getattr(r, "summary", "")
-        url = r.get("url") if isinstance(r, dict) else getattr(r, "entry_id", "")
-        pdf_url = r.get("pdf_url") if isinstance(r, dict) else getattr(r, "pdf_url", "")
-        authors = r.get("authors") if isinstance(r, dict) else getattr(r, "authors", [])
+        title = (r.get("title") if isinstance(r, dict) else getattr(r, "title", "")) or ""
+        abstract = (r.get("summary") if isinstance(r, dict) else getattr(r, "summary", "")) or ""
+        url = (r.get("url") if isinstance(r, dict) else getattr(r, "entry_id", "")) or ""
+        pdf_url = (r.get("pdf_url") if isinstance(r, dict) else getattr(r, "pdf_url", "")) or ""
+        authors = (r.get("authors") if isinstance(r, dict) else getattr(r, "authors", [])) or []
         authors_line = ", ".join(authors) if isinstance(authors, list) else str(authors)
 
         conclusion = ""
         if cfg["output"].get("include_conclusion", True):
             try:
-                conclusion = try_extract_conclusion(pdf_url)
+                conclusion = try_extract_conclusion(pdf_url) or ""
             except Exception:
                 conclusion = ""
 
