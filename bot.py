@@ -119,9 +119,14 @@ def make_email_body(cfg, curated):
 
     for r in curated:
         # safely extract fields (works for dicts or arxiv.Result objects)
+        url = (
+            r.get("url")
+            or r.get("link")
+            or getattr(r, "entry_id", "")
+            or ""
+        )
         title = (r.get("title") if isinstance(r, dict) else getattr(r, "title", "")) or ""
         abstract = (r.get("summary") if isinstance(r, dict) else getattr(r, "summary", "")) or ""
-        url = (r.get("url") if isinstance(r, dict) else getattr(r, "entry_id", "")) or ""
         authors = (r.get("authors") if isinstance(r, dict) else getattr(r, "authors", [])) or []
         authors_line = ", ".join(authors) if isinstance(authors, list) else str(authors)
 

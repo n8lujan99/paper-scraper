@@ -30,7 +30,6 @@ preferences:
     - general relativity
     - neutron star
     - pulsar
-    - gravitational wave
   all_keywords:
     # e.g. require both terms together"
     - "radiative transfer"
