@@ -131,6 +131,8 @@ def make_email_body(cfg, curated):
         authors_line = ", ".join(authors) if isinstance(authors, list) else str(authors)
 
         # TEXT block
+        if not url.startswith("http"):
+            url = f"https://arxiv.org/abs/{url.strip()}"
         lines_txt.append(f"{title}\n{url}\n")
         if authors_line:
             lines_txt.append(f"authors: {authors_line}\n")
