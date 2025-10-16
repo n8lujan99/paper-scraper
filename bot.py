@@ -1,11 +1,8 @@
 import os, yaml, feedparser, requests, datetime as dt
 from filters import score_paper, match_category
 from mailer import send_email
-from parsers import try_extract_conclusion
-
 
 print(f"[astro-ph bot] running: {__file__} SHA={os.environ.get('GITHUB_SHA', 'local')}")
-
 
 def load_config(path="config.yaml"):
     with open(path, "r", encoding="utf-8") as f:
@@ -106,7 +103,7 @@ def curate(cfg, results):
 
 def format_authors(authors, max_authors=5):
     """return 'A. Author et al.' if long list."""
-    names = [a.name for a in authors]
+    names = [a.name for a in authors] if authors and hasattr(authors[0], "name") else authors
     if not names:
         return ""
     if len(names) > max_authors:
@@ -125,24 +122,14 @@ def make_email_body(cfg, curated):
         title = (r.get("title") if isinstance(r, dict) else getattr(r, "title", "")) or ""
         abstract = (r.get("summary") if isinstance(r, dict) else getattr(r, "summary", "")) or ""
         url = (r.get("url") if isinstance(r, dict) else getattr(r, "entry_id", "")) or ""
-        pdf_url = (r.get("pdf_url") if isinstance(r, dict) else getattr(r, "pdf_url", "")) or ""
         authors = (r.get("authors") if isinstance(r, dict) else getattr(r, "authors", [])) or []
         authors_line = ", ".join(authors) if isinstance(authors, list) else str(authors)
-
-        conclusion = ""
-        if cfg["output"].get("include_conclusion", True):
-            try:
-                conclusion = try_extract_conclusion(pdf_url) or ""
-            except Exception:
-                conclusion = ""
 
         # TEXT block
         lines_txt.append(f"{title}\n{url}\n")
         if authors_line:
-            lines_txt.append(f"Authors: {authors_line}\n")
+            lines_txt.append(f"authors: {authors_line}\n")
         lines_txt.append(abstract + "\n")
-        if conclusion:
-            lines_txt.append("Conclusion:\n" + conclusion + "\n")
         lines_txt.append("-" * 60)
 
         # HTML block
@@ -151,8 +138,6 @@ def make_email_body(cfg, curated):
         if authors_line:
             lines_html.append(f"<p><i>{authors_line}</i></p>")
         lines_html.append(f"<p>{abstract}</p>")
-        if conclusion:
-            lines_html.append(f"<p><i>Conclusion:</i> {conclusion}</p>")
         lines_html.append("</li>")
 
     lines_html.append("</ol></body></html>")
@@ -174,7 +159,6 @@ def main():
     subject = f'{cfg["output"]["email"]["subject_prefix"]} {dt.date.today()} — {n} paper{"s" if n != 1 else ""}'
     send_email(cfg, subject, text_body, html_body)
     print(f"emailed {n} curated papers.")
-
 
 if __name__ == "__main__":
     main()
