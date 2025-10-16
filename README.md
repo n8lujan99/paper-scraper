@@ -1,4 +1,7 @@
-![Daily astro-ph Digest](https://github.com/<your-username>/astro-ph-digest-bot/actions/workflows/daily_digest.yml/badge.svg)
+![Daily astro-ph Digest](https://github.com/ajdavis25/astro-ph-digest-bot/actions/workflows/daily_digest.yml/badge.svg)
+
+
+built out of spite because stanford gatekept vox charta
 
 
 astroph-bot/
