@@ -13,16 +13,26 @@ arxiv:
 
 preferences:
   any_keywords:
+    - EHT
+    - event horizon telescope
     - Sgr A*
     - M87*
     - MHD
     - GRMHD
     - magnetohydrodynamics
     - EHT
+    - black hole
+    - event horizon
+    - accretion
+    - jet
+    - radiative transfer
+    - VLBI
+    - general relativity
+    - neutron star
+    - pulsar
+    - gravitational wave
   all_keywords:
-    # e.g. require both terms together
-    - "black hole"
-    - "event horizon"
+    # e.g. require both terms together"
     - "radiative transfer"
     - "general relativistic magnetohydrodynamics"
   exclude_keywords:
@@ -34,7 +44,8 @@ preferences:
     - "Anantua"
     - "Curd"
     - "Gußmann"
-  min_score: 2.0
+    - "Quataert"
+  min_score: 1.0
 
 output:
   include_conclusion: true
