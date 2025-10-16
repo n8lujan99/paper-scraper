@@ -50,7 +50,7 @@ preferences:
 output:
   include_conclusion: true
   email:
-    from_addr: "lizardtyphoon29@gmail.com"
+    from_addr: "arxivastrophbot@gmail.com"
     to_addrs:
       - "ajd96@proton.me"
       - "ashton.davis3@my.utsa.edu"
@@ -58,5 +58,5 @@ output:
     smtp_host: "smtp.gmail.com"
     smtp_port: 587
     use_starttls: true
-    username: "lizardtyphoon29@gmail.com"
+    username: "arxivastrophbot@gmail.com"
     password_env: "ASTROPH_EMAIL_PASSWORD"
