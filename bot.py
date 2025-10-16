@@ -1,8 +1,35 @@
-import os, yaml, feedparser, requests, datetime as dt
+import re, os, yaml, feedparser, requests, datetime as dt
 from filters import score_paper, match_category
 from mailer import send_email
 
 print(f"[astro-ph bot] running: {__file__} SHA={os.environ.get('GITHUB_SHA', 'local')}")
+
+# arXiv id pattern and canonical link helper
+_ARXIV_ID_RE = re.compile(r'(?:arxiv\.org/(?:abs|pdf)/)?(\d{4}\.\d{4,5})(v\d+)?', re.I)
+
+def canon_abs_url(paper):
+    """return canonical https://arxiv.org/abs/<id> for dict or arxiv.Result."""
+    if isinstance(paper, dict):
+        candidates = [paper.get("url"), paper.get("link"), paper.get("id")]
+    else:
+        candidates = [
+            getattr(paper, "entry_id", None),
+            getattr(paper, "link", None),
+            getattr(paper, "id", None),
+        ]
+
+    for u in candidates:
+        if not u:
+            continue
+        m = _ARXIV_ID_RE.search(str(u))
+        if m:
+            arxid = m.group(1) + (m.group(2) or "")
+            return f"https://arxiv.org/abs/{arxid}"
+
+    if isinstance(paper, dict) and paper.get("arxiv_id"):
+        return f"https://arxiv.org/abs/{paper['arxiv_id']}"
+    return ""
+
 
 def load_config(path="config.yaml"):
     with open(path, "r", encoding="utf-8") as f:
@@ -35,7 +62,7 @@ def fetch_recent(cfg):
         resp = requests.get(url, timeout=20)
         resp.raise_for_status()
     except Exception as e:
-        print(f"[ERROR] could not fetch from arXiv: {e}")
+        print(f"error: could not fetch from arXiv: {e}")
         return []
 
     feed = feedparser.parse(resp.text)
@@ -45,12 +72,20 @@ def fetch_recent(cfg):
             pub = dt.datetime.fromisoformat(entry.published.replace("Z", "+00:00"))
         except Exception:
             pub = dt.datetime.now(dt.timezone.utc)
+
+        # extract arXiv id cleanly
+        entry_id = getattr(entry, "id", "")
+        m = _ARXIV_ID_RE.search(entry_id) or _ARXIV_ID_RE.search(entry.link)
+        arxiv_id = (m.group(1) + (m.group(2) or "")) if m else ""
+
         if pub >= since:
             results.append({
                 "title": entry.title.strip(),
                 "summary": entry.summary.strip(),
                 "published": pub,
                 "link": entry.link,
+                "id": entry_id,
+                "arxiv_id": arxiv_id,
                 "authors": [a.name for a in entry.authors],
             })
 
@@ -63,26 +98,16 @@ def curate(cfg, results):
     prefs = cfg["preferences"]
 
     for r in results:
-        # extract core fields safely (works for dicts or arxiv.Result objects)
-        title = r.get("title") if isinstance(r, dict) else getattr(r, "title", "")
-        summary = r.get("summary") if isinstance(r, dict) else getattr(r, "summary", "")
-        authors = (
-            r.get("authors") if isinstance(r, dict)
-            else [a.name for a in getattr(r, "authors", [])]
-        )
-        url = r.get("url") if isinstance(r, dict) else getattr(r, "entry_id", "")
-        pdf_url = r.get("pdf_url") if isinstance(r, dict) else getattr(r, "pdf_url", "")
-        category = (
-            getattr(r, "primary_category", None)
-            if not isinstance(r, dict)
-            else cfg["arxiv"]["categories"][0]
-        )
+        title = r.get("title", "")
+        summary = r.get("summary", "")
+        authors = r.get("authors", [])
+        pdf_url = r.get("pdf_url", "")
+        category = cfg["arxiv"]["categories"][0]
+        url = canon_abs_url(r)
 
-        # skip if category doesn’t match user’s config
         if not match_category(category, cfg["arxiv"]["categories"]):
             continue
 
-        # unified scoring
         score, details = score_paper(title, summary, authors, prefs)
 
         if score >= prefs.get("min_score", 1.0):
@@ -102,7 +127,6 @@ def curate(cfg, results):
 
 
 def format_authors(authors, max_authors=5):
-    """return 'A. Author et al.' if long list."""
     names = [a.name for a in authors] if authors and hasattr(authors[0], "name") else authors
     if not names:
         return ""
@@ -118,26 +142,11 @@ def make_email_body(cfg, curated):
     lines_html = ['<html><body><h2>astro-ph digest</h2><ol>']
 
     for r in curated:
-        url = (
-            r.get("url")
-            or r.get("link")
-            or getattr(r, "entry_id", "")
-            or ""
-        )
-        title = (r.get("title") if isinstance(r, dict) else getattr(r, "title", "")) or ""
-        abstract = (r.get("summary") if isinstance(r, dict) else getattr(r, "summary", "")) or ""
-        authors = (r.get("authors") if isinstance(r, dict) else getattr(r, "authors", [])) or []
+        url = r.get("url") or canon_abs_url(r) or ""
+        title = r.get("title", "")
+        abstract = r.get("summary", "")
+        authors = r.get("authors", [])
         authors_line = ", ".join(authors) if isinstance(authors, list) else str(authors)
-
-        # fix invalid arxiv url handling
-        if not url.startswith("http"):
-            url = f"https://arxiv.org/abs/{url.strip()}"
-        elif "export.arxiv.org" in url:
-            # replace export.arxiv.org with canonical arxiv.org/abs/ID
-            parts = url.split("/")
-            arx_id = parts[-1]
-            if "." in arx_id or arx_id.isdigit():
-                url = f"https://arxiv.org/abs/{arx_id}"
 
         # TEXT block
         lines_txt.append(f"{title}\n{url}\n")
@@ -162,6 +171,7 @@ def main():
     cfg = load_config()
     papers = fetch_recent(cfg)
     curated = curate(cfg, papers)
+
     if not curated:
         print("no matches today.")
         subject = f'{cfg["output"]["email"]["subject_prefix"]} {dt.date.today()} — 0 papers'
@@ -173,6 +183,7 @@ def main():
     subject = f'{cfg["output"]["email"]["subject_prefix"]} {dt.date.today()} — {n} paper{"s" if n != 1 else ""}'
     send_email(cfg, subject, text_body, html_body)
     print(f"emailed {n} curated papers.")
+
 
 if __name__ == "__main__":
     main()
