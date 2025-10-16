@@ -104,14 +104,22 @@ def format_authors(authors, max_authors=5):
 def make_email_body(cfg, curated):
     lines_txt = []
     lines_html = ['<html><body><h2>astro-ph digest</h2><ol>']
-    for score, details, r in curated:
-        url = r.entry_id
-        title = r.title.strip().replace("\n", " ")
-        abstract = (r.summary or "").strip()
-        authors_line = format_authors(r.authors)
+
+    for r in curated:
+        # safely extract fields (works for dicts or arxiv.Result objects)
+        title = r.get("title") if isinstance(r, dict) else getattr(r, "title", "")
+        abstract = r.get("summary") if isinstance(r, dict) else getattr(r, "summary", "")
+        url = r.get("url") if isinstance(r, dict) else getattr(r, "entry_id", "")
+        pdf_url = r.get("pdf_url") if isinstance(r, dict) else getattr(r, "pdf_url", "")
+        authors = r.get("authors") if isinstance(r, dict) else getattr(r, "authors", [])
+        authors_line = ", ".join(authors) if isinstance(authors, list) else str(authors)
+
         conclusion = ""
         if cfg["output"].get("include_conclusion", True):
-            conclusion = try_extract_conclusion(r.pdf_url)
+            try:
+                conclusion = try_extract_conclusion(pdf_url)
+            except Exception:
+                conclusion = ""
 
         # TEXT block
         lines_txt.append(f"{title}\n{url}\n")
