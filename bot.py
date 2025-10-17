@@ -33,7 +33,10 @@ def canon_abs_url(paper):
 
 def load_config(path="config.yaml"):
     with open(path, "r", encoding="utf-8") as f:
-        return yaml.safe_load(f)
+        raw = f.read()
+    # substitute ${VAR} with its env value if present
+    expanded = re.sub(r"\$\{([^}]+)\}", lambda m: os.getenv(m.group(1), ""), raw)
+    return yaml.safe_load(expanded)
 
 
 def build_search_query(cfg):

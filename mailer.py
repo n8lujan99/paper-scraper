@@ -26,9 +26,9 @@ def send_email(cfg, subject, text_body, html_body):
 
     # build MIME message
     msg = MIMEMultipart("alternative")
-    msg["Subject"] = subject
-    msg["From"] = em["from_addr"]
-    msg["To"] = ", ".join(em["to_addrs"])
+    msg["subject"] = subject
+    msg["from"] = em["from_addr"]
+    msg["to"] = ", ".join(em["to_addrs"])
     msg.attach(MIMEText(text_body, "plain", "utf-8"))
     msg.attach(MIMEText(html_body, "html", "utf-8"))
 
