@@ -1,0 +1,2 @@
+Host git@github.com:n8lujan99/Draco_Dark_OSPM.git HostName github.com User git IdentityFile 
+  ~/.ssh/id_ed25519_github IdentitiesOnly yes

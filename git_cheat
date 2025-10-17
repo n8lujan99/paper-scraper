@@ -1,0 +1,43 @@
+# ======================== GIT SSH CHEAT SHEET ======================== #
+# This assumes you're using SSH (git@github.com:username/repo.git)
+# and that your SSH key is already configured in ~/.ssh/
+
+# --- Core workflow --- #
+git status                                   # check repo status (shows modified/untracked files)
+git add orbiting_spot_data/                  # stage all CSVs in orbiting_spot_data folder
+git add .                                    # OR stage everything in the repo
+git commit -m "Organized orbiting_spot_data files"   # commit staged changes with message
+git pull --rebase origin main                # pull latest changes before pushing
+git push origin main                         # push committed changes to GitHub main branch
+
+# --- Useful utilities --- #
+git log --oneline                            # view short commit history
+git diff                                     # see unstaged changes in detail
+git remote -v                                # confirm SSH remote URL (should start with git@)
+ssh -T git@github.com                        # test SSH connection to GitHub (expect greeting)
+git branch                                   # show current branch and available branches
+git checkout branchname                      # switch to another branch
+git merge branchname                         # merge another branch into current one
+git add . && git commit -m "quick update" && git push origin main   # one-line update and push
+
+# ========================== EXAMPLE WORKFLOW ========================== #
+
+# Example: You organized your CSVs in orbiting_spot_data and want to push updates
+cd ~/github/myrepo                           # go to your repo
+git status                                   # check which CSVs changed
+git add orbiting_spot_data/                  # stage the updated CSV files
+git commit -m "Cleaned up orbiting_spot_data folder and added new datasets"
+git pull --rebase origin main                # make sure your branch is up to date
+git push origin main                         # push your changes to GitHub
+
+# Example: You want to get new changes someone else pushed
+git pull origin main                         # pulls the latest commits from GitHub
+
+# Example: You edited remotely or on another machine and need to merge
+git fetch origin main                        # fetches changes without merging
+git merge origin/main                        # merges fetched updates into your local branch
+
+# Example: Creating a quick update in one line
+git add . && git commit -m "updated CSVs" && git push origin main
+
+# ====================================================================== #
