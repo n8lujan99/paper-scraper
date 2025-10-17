@@ -1,3 +1,12 @@
 # physics_models
+# This file contains global variables and parameters used across the OSPM codebase.
 
+import numpy as np
+import math
+from scipy.constants import G, c, pi
 
+GG = G
+C = c
+Msun = 1.98847e30
+kpc_to_m = 3.085677581e19
+arcsec_to_rad = np.deg2rad(1/3600)
