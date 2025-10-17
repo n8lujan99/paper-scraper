@@ -1,0 +1,1 @@
+source_id,RA_deg,RA_error,Dec_deg,Dec_error,parallax,parallax_error,pmra,pmra_error,pmdec,pmdec_error,radial_velocity,radial_velocity_error,phot_g_mean_mag,phot_bp_mean_mag,phot_rp_mean_mag,bp_rp,ruwe,distance_gspphot,phot_bp_rp_excess_factor,dx_pc,dy_pc,r_pc,l_deg,b_deg,vlos,rbin,parallax_SNR,fg_parallax_flag,fg_gspphot_flag,fg_flag

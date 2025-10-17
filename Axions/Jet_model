@@ -1,0 +1,905 @@
+import matplotlib as mpl
+import matplotlib.pyplot as plt
+import scipy
+import numpy as np
+import numpy.ma as ma
+import itertools
+import sympy as sp
+
+from itertools import product
+from scipy.integrate import solve_ivp
+from scipy.special import gamma as GammaFn
+from scipy.interpolate import interp1d
+from scipy.special import obl_ang1
+from scipy.optimize import root
+
+# === Physical Constants (SI) ===
+rhoV = 1e-4
+p = 2.001
+xi_max = 10
+rhoV = 1e6 # for testing
+p = 2.5
+c = 299792458.0
+epsilon_0 = 8.8541878128e-12  # F/m
+me = 9.10938356e-31           # kg
+e = 1.602176634e-19 # Coulombs
+re = (e**2) / (4 * np.pi * epsilon_0 * me * c**2)
+nu_photon = 86e9
+nu_photon = float(nu_photon)
+ne = 1e9 # electron density in m^-3
+mu_0 = 4 * np.pi * 1e-7
+
+# === Jet Parameters ===
+Phi_H = 1e6
+mH = 1e13
+
+# === Angular → Physical Conversions ===
+dL = 5.1e23
+m2mas = (1.0 / dL) * ((180 * 60**2 * 1e3) / np.pi)  # meters → milliarcseconds
+Xi_max = 10.0
+z_ref = 50.0
+s_max = np.sqrt(z_ref * Xi_max)
+# === Symbolic Setup (Ξ = s² / z) ===
+s_symb = sp.symbols('s', real=True)
+z_symb = sp.symbols('z', positive=True, real=True)
+Xi = sp.symbols('Xi', real=True)
+xi = s_symb**2 / z_symb
+# Electric field E = B × (Ω ê_z × r)
+Xi_expr = s_symb**2 / z_symb
+I2Jy = 1e26 * (np.pi / (180 * 60**2 * 1e3))**2
+
+# Magnetic field components in cylindrical coordinates
+Phi, II, Omega = sp.Function('Phi'), sp.Function('II'), sp.Function('Omega')
+Phi_p, Phi_pp, II_p, Omega_p = map(sp.Function, ['Phi_p', 'Phi_pp', 'II_p', 'Omega_p'])
+dXi_ds = 2 * s_symb / z_symb
+dXi_dz = -s_symb**2 / z_symb**2
+B_s = -(1 / (2 * np.pi * s_symb)) * Phi_p(Xi) * dXi_dz
+B_phi = II(Xi) / (2 * np.pi * s)
+B_z = (1 / (2 * np.pi * s_symb)) * Phi_p(Xi) * dXi_ds
+
+#symbolic and numerical functions
+II = lambda Xi: I_ref(Xi)
+I0 = Phi_H 
+dPhi_dXi = lambda Xi: 1 / np.cosh(0.3 * Xi)**2
+Phi_p_num = lambda Xi: Phi_H * dPhi_dXi(Xi)
+I_ref = lambda Xi: -2 *I0* Omega_ref(Xi) * Xi * dPhi_dXi(Xi)
+Phi_ref = lambda Xi: np.tanh(0.3 * Xi)
+Omega_ref = lambda Xi: 0.15 / (1 + (Xi / 5)**2)
+Phi_func   = lambda xi: Phi_H * Phi_ref(xi)
+Omega_func = lambda xi: (c / mH) * Omega_ref(xi)
+II_func    = lambda xi: I_ref(xi)
+
+Omega_sym = sp.Function('Omega')(Xi)
+Omega_vec = sp.Matrix([0, Omega_sym * s, 0])
+subs_stoz = {sp.Pow(s_symb, 2)/z_symb: Xi}
+
+B_vec = sp.Matrix([B_s, B_phi, B_z])
+E_vec = -sp.simplify(Omega_vec.cross(B_vec))
+poynting_vec = sp.simplify((1 / mu_0) * E_vec.cross(B_vec))
+
+# Grid setup
+nX = 21
+nY = 101
+iy = nY // 2
+ix = nX // 2
+iY = iy + 1
+iX = ix + 1
+z1, z2, z3, z4 = 10, 100, 1000, 10000
+Y1 = 10
+Y3 = 100
+N = 300
+
+# Observer angle
+#theta = 0.5  # rad
+theta = np.radians(5)
+
+Xmax_row = np.zeros(nY)
+sin_theta = np.clip(np.sin(theta), 1e-6, None)
+tan_theta_sq = np.clip(np.tan(theta)**2, 1e-6, None)
+cos_theta = np.cos(theta)
+
+print("Variables Initialized")
+
+# Initialize all necessary grids
+s_grid = np.zeros((nY, nX))           # radial coordinate (meters)
+z_grid_vals = np.zeros((nY, nX))           # vertical coordinate (meters)
+zeta_min_grid_vals = np.zeros((nY, nX))    # lower ray integration bound
+zeta_max_grid_vals = np.zeros((nY, nX))
+
+# 1-based indexing
+base_grid = [(iY, iX) for iY in range(1, nY + 1) for iX in range(1, nX + 1)]
+
+def initialize_zeta_grids():
+    global s_grid, z_grid_vals, zeta_min_grid_vals, zeta_max_grid_vals
+    
+    z = np.logspace(np.log10(Y1), np.log10(Y3), nY)
+    xi_pos = np.logspace(np.log10(1e-3), np.log10(xi_max), nX // 2)
+    xi_vals = np.concatenate([-xi_pos[::-1], xi_pos])
+
+    for iy, z in enumerate(z):
+        for ix, xi in enumerate(xi_vals):
+            if not np.isfinite(xi):
+                s = 0.0
+            else:
+                s = np.sign(xi) * np.sqrt(abs(xi) * z)
+
+            s_grid[iy, ix] = s
+            z_grid_vals[iy, ix] = z
+
+            print("s_grid min/max:", np.min(s_grid), np.max(s_grid))
+            print("xi_vals:", xi_vals)
+            print("min/max xi:", np.min(xi_vals), np.max(xi_vals))
+    
+            sqrt_arg = xi_max**2 * cos_theta**2 + 4 * sin_theta * (z * xi_max - s**2 * sin_theta)
+
+            if sqrt_arg < 0:
+                print(f"[SKIP] sqrt_arg < 0 at ({iy},{ix}): skipping ray")
+                zeta_min_grid_vals[iy, ix] = np.nan
+                zeta_max_grid_vals[iy, ix] = np.nan
+                continue
+            
+            root_term = np.sqrt(sqrt_arg)
+
+            zmin = (2 * z * sin_theta * cos_theta + xi_max * cos_theta - root_term) / (2 * sin_theta**2)
+            zmax = (2 * z * sin_theta * cos_theta + xi_max * cos_theta + root_term) / (2 * sin_theta**2)
+
+            # Skip invalid integration rays
+            if zmin <= 0 or zmax <= zmin:
+                zeta_min_grid_vals[iy, ix] = np.nan
+                zeta_max_grid_vals[iy, ix] = np.nan
+                continue
+
+            zeta_min_grid_vals[iy, ix] = zmin
+            zeta_max_grid_vals[iy, ix] = zmax
+
+# Call it before testing
+initialize_zeta_grids()
+print("Grids initialized.")
+
+Xi_num = lambda s, z: s**2 / z
+
+print("s_grid min/max:", np.min(s_grid), np.max(s_grid))
+
+# Assume s_grid and z_grid_vals are now populated, shape (nY, nX)
+S = s_grid 
+Z = z_grid_vals
+print(S)
+print(Z)
+# === Recompute xi_grid using the new S and Z ===
+
+xi_grid = np.zeros_like(S)
+for iy in range(S.shape[0]):
+    for ix in range(S.shape[1]):
+        try:
+            xi_val = Xi_num(S[iy, ix], Z[iy, ix])
+            xi_grid[iy, ix] = xi_val if np.isfinite(xi_val) else 0.0
+        except:
+            xi_grid[iy, ix] = 0.0
+
+# === Compute Omega_vals (same as original) ===
+xi_flat = xi_grid[:, xi_grid.shape[1] // 2]  # take central vertical slice for Omega
+Omega_vals = Omega_func(xi_flat)
+
+# === Safety check for base_grid indexing ===
+base_grid = [(iY, iX) for iY in range(1, nY + 1) for iX in range(1, nX + 1)]
+if (0 <= base_grid[0][0] < nY) and (0 <= base_grid[0][1] < nX):
+    print("[INFO] base_grid indexing matches 0-based array access.")
+else:
+    print("[WARNING] base_grid is using 1-based indexing; adjust s_grid access or grid construction.")
+
+# quick test make sure the counts are not zero and the range is -# +# 
+print("xi_grid finite count:", np.sum(np.isfinite(xi_grid)))
+print("xi_grid nonzero count:", np.sum(xi_grid != 0))
+print("xi_grid min/max:", np.nanmin(xi_grid), np.nanmax(xi_grid))
+print("S min/max:", np.nanmin(S), np.nanmax(S))
+print("Z min/max:", np.nanmin(Z), np.nanmax(Z))
+
+
+def divergence_cyl(As, Aphi, Az):
+    return sp.simplify(1/s_symb * sp.diff(s_symb*As, s_symb) + sp.diff(Az, z_symb))
+
+# === Charge density from divergence of E ===
+rho = divergence_cyl(E_vec[0], E_vec[1], E_vec[2])
+rho = rho.subs(subs_stoz)  # Fix 3 (substitute only after divergence)
+
+def curl_cyl(As, Aphi, Az):
+    curl_s   = -sp.diff(Aphi, z_symb)
+    curl_phi =  sp.diff(As, z_symb) - sp.diff(Az, s_symb)
+    curl_z   =  1/s_symb * sp.diff(s_symb*Aphi, s_symb)
+    return tuple(sp.simplify(c) for c in (curl_s, curl_phi, curl_z))
+
+
+
+def Xi_num(s, z):
+    if not np.isfinite(s) or not np.isfinite(z):
+        return 0.0
+    if z <= 1e-10:
+        return 0.0
+    return s**2 / z
+
+Xi_num = lambda s, z: s**2 / z if z > 1e-10 else 0.0
+xi_grid[iy, ix] = Xi_num(S[iy, ix], Z[iy, ix])
+
+for iy in range(S.shape[0]):
+    for ix in range(S.shape[1]):
+        xi_grid[iy, ix] = Xi_num(S[iy, ix], Z[iy, ix])
+V_grid = (c * Phi_H / mH) * Phi_func(xi_grid)
+
+
+j_s, j_phi, j_z = (c.subs(subs_stoz) for c in curl_cyl(B_s, B_phi, B_z))
+# === Physical quantity: energy-momentum flux vector ===
+momentum_flux_vec = sp.simplify(rho * E_vec + sp.Matrix([j_s, j_phi, j_z]).cross(B_vec))
+
+# Series expansion helper
+# Expand a symbolic matrix in var about x0 to order n (drop O-term)
+def series_matrix(mat: sp.Matrix, var, x0, n):
+    return sp.Matrix([sp.series(c, var, x0, n).removeO() for c in mat])
+
+# Expand a scaled version of the momentum flux in Ξ near Ξ = 0
+expr_to_expand = 4 * sp.pi**2 * sp.sqrt(Xi*z_symb) * z_symb**5 * momentum_flux_vec.subs({s_symb**2: Xi*z_symb})
+
+print("Series expansion of scaled momentum flux in Ξ up to O(Ξ²):")
+
+def dV_dXi(Xi_val, V):
+    Xi_val = float(Xi_val)  # ensure scalar
+    if Xi_val == 0:
+        return 0.0
+    return -I_ref(Xi_val) / (4 * np.pi * Xi_val)
+
+sol = solve_ivp(dV_dXi, (0, Xi_max), [0.0], max_step=0.01, rtol=1e-10, atol=1e-12)
+V_interp = interp1d(sol.t, sol.y[0], fill_value="extrapolate")
+V_func = lambda s, z: (c * Phi_H / mH) * V_interp(Xi_num(s, z))
+
+def zero_fields():
+    return {
+        "xi": 0, "Phi": 0, "Omega": 0, "I": 0,
+        "B": np.array([0.0, 0.0, 0.0]),
+        "E": np.array([0.0, 0.0, 0.0]),
+        "NEM": 0.0, "GEM": 0.0
+    }
+
+def safe_div(x, min_val=1e-3 ):
+    return x if abs(x) > min_val else min_val * np.sign(x if x != 0 else 1.0)
+
+
+# Inspect the grids
+print ("zeta_grids initialized successfully.")
+print(zeta_max_grid_vals)
+
+iy = S.shape[0] // 2  # middle row in z (fixed height)
+plt.figure(figsize=(6, 4))
+plt.plot(S[iy, :], label="s at z = {:.2f}".format(Z[iy, 0]))
+plt.axhline(0, color='k', linestyle='--')
+plt.xlabel("ix (horizontal grid index)")
+plt.ylabel("s [m]")
+plt.title("s across horizontal slice at fixed z")
+plt.grid(True)
+plt.legend()
+plt.tight_layout()
+plt.show()
+
+
+def compute_fields(s, z):
+    if z <= 0 or not np.isfinite(z) or not np.isfinite(s):
+        return zero_fields()
+    try:
+        xi = Xi_num(s, z)
+        if not np.isfinite(xi) or xi < 0:
+            raise ValueError
+    except:
+        return {
+            "xi": 0, "Phi": 0, "Omega": 0, "I": 0,
+            "B": np.array([0.0, 0.0, 0.0]), 
+            "E": np.array([0.0, 0.0, 0.0]),
+            "vz": 0.0, "v": np.array([0.0, 0.0, 0.0]),
+            "NEM": 0.0, "GEM": 0.0, "Gamma": 1.0, "psi": 0.0
+        }
+
+    s_safe = safe_div(s)
+
+    try:
+        Phi = float(Phi_func(xi))
+        Omega = float(Omega_func(xi))
+        II = float(II_func(xi))
+        Phi_p_val = Phi_p_num(xi)
+    
+    
+        # === Magnetic Field (in Tesla) ===
+        B_s   = - (1 / (2 * np.pi * s_safe)) * Phi_p_val * (s_safe**2 / z**2)     # odd in s
+        B_phi = II / (2 * np.pi * s_safe)                                                 # even in s
+        B_z   = (1 / (2 * np.pi * s_safe)) * Phi_p_val * (2 * s_safe / z)       # odd in s
+        B_vec = np.array([B_s, B_phi, B_z])
+    
+        # Electric field
+        E_vec = (Omega * s_safe) * np.cross([0.0, 1.0, 0.0], B_vec)  # V/m
+
+        # Velocity from E × B drift (normalized)
+        B2 = np.dot(B_vec, B_vec)
+        if B2 > 0 and np.all(np.isfinite(B_vec)) and np.all(np.isfinite(E_vec)):
+            v_vec = np.cross(E_vec, B_vec) / B2
+        else:
+            v_vec = np.array([0.0, 0.0, 0.0])
+
+        vz_val = v_vec[2]
+        gamma  = 1.0 / np.sqrt(1 - np.dot(v_vec, v_vec)) if np.dot(v_vec, v_vec) < 1 else np.inf
+
+        # Observer angle in poloidal plane
+        psi = np.arctan2(B_s, B_z) if (B_z != 0 or B_s != 0) else 0.0
+
+        
+        NEM = np.cross(E_vec, B_vec)[2] / mu_0  # W/m²
+        GEM = 0.0 if Omega == 0 else NEM / Omega  # J/m²
+        if not np.isfinite(GEM):
+            GEM = 0.0
+        return {
+            "xi": xi, "Phi": Phi, "Omega": Omega, "I": II,
+            "B": B_vec, "E": E_vec,
+            "v": v_vec, "vz": vz_val, "Gamma": gamma, "psi": psi,
+            "NEM": NEM, "GEM": GEM
+                }
+        
+    except Exception as e:
+        print(f"[ERROR] s={s:.3e}, z={z:.3e}, xi={xi:.3e} failed with: {e}")
+        return {
+            "xi": 0, "Phi": 0, "Omega": 0, "I": 0,
+            "B": np.array([0.0, 0.0, 0.0]),
+            "E": np.array([0.0, 0.0, 0.0]),
+            "v": np.array([0.0, 0.0, 0.0]), "vz": 0.0, "Gamma": 1.0, "psi": 0.0,
+            "NEM": 0.0, "GEM": 0.0
+        }
+
+def velocity_vector(s, z):
+    flds = compute_fields(s, z)
+    E = flds["E"]
+    B = flds["B"]
+    B2 = np.dot(B, B)
+
+    if B2 <= 0 or not np.all(np.isfinite(B)) or not np.all(np.isfinite(E)):
+        return np.zeros(3)
+
+    v = np.cross(E, B) / B2
+    if not np.all(np.isfinite(v)) or np.any(np.iscomplex(v)):
+        return np.zeros(3)
+
+    return v.real
+
+
+def Doppler_factor_from_coords(s, z, theta_obs):
+    flds = compute_fields(s, z)
+    E = flds["E"]
+    B = flds["B"]
+    B2 = np.dot(B, B)
+
+    print("s =", s, "z =", z, "theta =", theta_obs)
+    flds = compute_fields(s, z)
+    print("E =", flds["E"], "B =", flds["B"])
+
+    if B2 <= 0 or not np.isfinite(B2) or not np.all(np.isfinite(E)):
+        return v.real
+
+    v = np.cross(E, B) / B2
+    if not np.all(np.isfinite(v)) or np.any(np.iscomplex(v)):
+        return v.real
+    v = np.real(v)
+    
+    v_sq = np.dot(v, v)
+    if v_sq >= 1 or not np.isfinite(v_sq):
+        gamma = 1e6
+    else:
+        gamma = 1.0 / np.sqrt(1 - v_sq)
+
+    los = np.array([np.sin(theta_obs), 0.0, np.cos(theta_obs)])
+    dot = np.dot(v, los)
+    denominator = gamma * (1 - dot)
+
+    if denominator <= 0 or not np.isfinite(denominator):
+        return 1.0
+    print("v:", v)
+    print("v^2:", v_sq)
+    print("gamma:", gamma)
+    print("dot:", dot)
+    print("denominator:", denominator)
+    print("v =", v, "v^2 =", v_sq, "gamma =", gamma)
+    print("dot =", dot, "denominator =", denominator)
+    return 1.0 / denominator
+
+# --- Initialize output arrays ---
+B_mag    = np.full_like(s_grid, np.nan)
+E_mag    = np.full_like(s_grid, np.nan)
+NEM_vals = np.full_like(s_grid, np.nan)
+GEM_vals = np.full_like(s_grid, np.nan)
+
+D_grid    = np.full_like(s_grid, np.nan)
+Be_grid   = np.full_like(s_grid, np.nan)
+jnu_grid  = np.full_like(s_grid, np.nan)
+
+# --- Evaluate fields over the grid ---
+for iy in range(s_grid.shape[0]):
+    for ix in range(s_grid.shape[1]):
+        s = s_grid[iy, ix]
+        z = z_grid_vals[iy, ix]
+
+        # Skip unphysical values
+        if z <= 0 or not np.isfinite(s) or not np.isfinite(z):
+            continue
+
+        result = compute_fields(s, z)
+
+        # Only accept finite output
+        if np.all(np.isfinite(result["B"])) and np.all(np.isfinite(result["E"])):
+            B_mag[iy, ix]    = np.linalg.norm(result["B"])
+            E_mag[iy, ix]    = np.linalg.norm(result["E"])
+            NEM_vals[iy, ix] = result["NEM"]
+            GEM_vals[iy, ix] = result["GEM"]
+            
+for iy in range(nY):  # vertical index, z-axis
+    for ix in range(nX):  # horizontal index, s-axis
+        s = s_grid[iy, ix]
+        z = z_grid_vals[iy, ix]
+
+        if z <= 0 or not np.isfinite(s) or not np.isfinite(z):
+            continue
+
+        try:
+            v_vec = velocity_vector(s, z)
+            flds = compute_fields(s, z)
+            B = flds["B"]
+            E = flds["E"]
+            psi = flds["psi"]
+
+            # Observer Geometry
+            BX = B[0] * sin_theta + B[1] * cos_theta
+            BY = -B[0] * cos_theta + B[2] * sin_theta
+            EX = (E[0] * sin_theta + E[1] * cos_theta) / c
+            EY = (-E[0] * cos_theta + E[2] * sin_theta) / c
+
+            Bmag_proj_sq = (BX + EY)**2 + (BY - EX)**2
+            Be = np.sqrt(max(Bmag_proj_sq, 1e-20))
+            D = Doppler_factor_from_coords(s, z, theta)
+
+            gamma_min = 10.0
+            gamma_max = 1e6
+            gamma_peak = max(D * gamma_min, gamma_min)
+
+            if p == 1.0:
+                PLCutoffFactor = 1.0 / np.log(gamma_max / gamma_min)
+            else:
+                PLCutoffFactor = 1.0 / (gamma_min**(1 - p) - gamma_max**(1 - p))
+
+            Ps = gamma_peak**2 * Be**2
+            term1 = np.sqrt(3) * D**4 * Ps * nu_photon * re / (2 * c)
+            arg_term2 = (3 * e * Be) / (2 * np.pi * me * nu_photon)
+            log_term2 = np.clip(1.5 * np.log(arg_term2), -100, 100)
+            term2 = np.exp(log_term2)
+            term3 = GammaFn((3 * p - 1) / 12) * GammaFn((3 * p + 19) / 12) / (p + 1)
+
+            jnu = PLCutoffFactor * term1 * term2 * term3
+            jnu = np.clip(jnu, 0.0, 1e10)
+            
+            print(f"[WRITE] D={D:.2e}, jnu={jnu:.2e}, Be={Be:.2e} at (iy={iy}, ix={ix})")
+
+            D_grid[iy, ix]   = D
+            Be_grid[iy, ix]  = Be
+            jnu_grid[iy, ix] = jnu
+
+        except Exception as err:
+            print(f"[EXCEPTION] s={s:.2f}, z={z:.2f}: {err}")
+            continue
+
+                    
+print("Fields computed over grid.")
+
+print("B_mag", B_mag)    
+print("E_mag", E_mag) 
+print("NEM_vals", NEM_vals)
+print("GEM_vals", GEM_vals)
+print("D_grid", D_grid) 
+print("Be_grid", Be_grid)
+print("jnu_grid", jnu_grid) 
+
+def plot_diag_grid(data, title, cmap="magma", log=False):
+    plt.figure(figsize=(6, 6))
+    display_data = np.log10(data) if log else data
+    img = plt.imshow(
+        display_data,
+        origin="lower",
+        extent=[s_grid.min(), s_grid.max(), z_grid_vals.min(), z_grid_vals.max()],  # s = x-axis, z = y-axis
+        aspect="auto",
+        cmap=cmap
+    )
+    plt.colorbar(img, label=title)
+    plt.xlabel("s")
+    plt.ylabel("z")
+    plt.title(title)
+    plt.tight_layout()
+    plt.show()
+    plt.imshow(S, origin='lower')
+    plt.title("S Grid")
+    plt.colorbar()
+    plt.show()
+
+    plt.imshow(Z, origin='lower')
+    plt.title("Z Grid")
+    plt.colorbar()
+    plt.show()
+
+#plot_diag_grid(D_grid, "Doppler Factor D", log=False)
+#plot_diag_grid(Be_grid, "Projected B field (Be)", log=True)
+#plot_diag_grid(jnu_grid, "Emissivity $j_\\nu$", log=True) # Really just for testing purposes
+# This function will print a summary of the grid and plot some debug information
+def debug_grid_summary():
+
+    print("[DEBUG] s_grid row sample:", s_grid[iy])
+    print("s min =", np.min(s_grid), "s max =", np.max(s_grid))
+
+    plt.figure()
+    plt.scatter(s_grid, z_grid_vals, s=5, alpha=0.6)
+    plt.xlabel("s (m)")
+    plt.ylabel("z (m)")
+    plt.title("Jet Grid Layout: (s, z)")
+    plt.grid(True)
+    plt.show()
+
+    delta_z_plt = zeta_max_grid_vals - zeta_min_grid_vals
+
+
+    plt.figure()
+    plt.imshow(delta_z_plt, origin='lower', aspect='auto', cmap='viridis')
+    plt.colorbar(label="Δz (m)")
+    plt.title("Ray Length Δz across grid")
+    plt.xlabel("X index")
+    plt.ylabel("Y index")
+    plt.show()
+
+    ix_mid_plt = s_grid.shape[1] // 2
+    iy_mid_plt = s_grid.shape[0] // 2
+
+    plt.plot(s_grid[iy_mid_plt, :], zeta_min_grid_vals[iy_mid_plt, :], label='zeta_min')
+    plt.plot(s_grid[iy_mid_plt, :], zeta_max_grid_vals[iy_mid_plt, :], label='zeta_max')
+    plt.title("Zeta bounds along central row (fixed z)")
+    plt.xlabel("s (m)")
+    plt.ylabel("zeta (m)")
+    plt.legend()
+    plt.grid(True)
+    plt.show()
+
+    z_sample = z_grid_vals[iy, ix]
+    s_sample = s_grid[iy, ix]
+    xi_sample = s_sample**2 / z_sample
+
+    print("\n[DEBUG] Grid center (ix, iy) = (%d, %d)" % (ix, iy))
+    print(f"[DEBUG] z = {z_sample:.3e} m")
+    print(f"[DEBUG] s = {s_sample:.3e} m")
+    print(f"[DEBUG] ξ = s²/z = {xi_sample:.3e}")
+
+    zmin = zeta_min_grid_vals[iy, ix]
+    zmax = zeta_max_grid_vals[iy, ix]
+
+    print(f"[DEBUG] zeta_min = {zmin:.3e}")
+    print(f"[DEBUG] zeta_max = {zmax:.3e}")
+    print(f"[DEBUG] Δz = zeta_max - zeta_min = {zmax - zmin:.3e}")
+
+    print("s at center:", s_grid[iy, ix])
+    print("z at center:", z_grid_vals[iy, ix])
+    print("ξ = s²/z:", s_grid[iy, ix]**2 / z_grid_vals[iy, ix])
+    print("s min:", np.min(s_grid))
+    print("s max:", np.max(s_grid))
+
+# Run it
+#debug_grid_summary()
+
+# === Fields Plotting ===
+
+def test_flds(Xi_max, V_interp, c, Phi_H, mH, xi_grid, S, Z, B_mag, E_mag, NEM_vals, GEM_vals, m2mas):
+    
+    # --- Plot V(Ξ) profile ---
+    Xi_plot = np.linspace(0.001, Xi_max, 300)
+    V_plot = (c * Phi_H / mH) * V_interp(Xi_plot)
+
+    plt.figure(figsize=(6, 4))
+    plt.plot(Xi_plot, V_plot)
+    plt.xlabel(r"$\Xi$")
+    plt.ylabel(r"$V(\Xi)$")
+    plt.title("Potential $V(\Xi)$")
+    plt.grid(True)
+    plt.tight_layout()
+    plt.show()
+
+    plt.figure(figsize=(6, 4))
+    plt.imshow(
+    V_grid, origin='lower',
+    extent=[S.min(), S.max(), Z.min(), Z.max()],
+    aspect='auto',
+    cmap='magma'
+    )
+    plt.xlabel("s [m]")
+    plt.ylabel("z [m]")
+    plt.title("Potential $V(s, z)$ via $\\Xi(s,z)$")
+    plt.colorbar(label=r"$V(\Xi)$")
+    plt.tight_layout()
+    plt.show()
+
+    print("ξ min =", np.nanmin(xi_grid), "ξ max =", np.nanmax(xi_grid))
+    print("s range:", np.nanmin(S), np.nanmax(S))
+    print("z range:", np.nanmin(Z), np.nanmax(Z))
+    print("xi_grid shape:", xi_grid.shape)
+
+    # --- Field Panel Plotting ---
+    def plot_field_panel(B, E, NEM, GEM, use_mas=False):
+        s_units = S * m2mas if use_mas else S
+        z_units = Z * m2mas if use_mas else Z
+        xlabel = "s [mas]" if use_mas else "s [m]"
+        ylabel = "z [mas]" if use_mas else "z [m]"
+
+        fig, axs = plt.subplots(2, 2, figsize=(12, 10), constrained_layout=True)
+        fields = [B, E, NEM, GEM]
+        titles = ["|B| [T]", "|E| [V/m]", "NEM [W/m²]", "GEM [J/m²]"]
+
+        for ax, data, title in zip(axs.flatten(), fields, titles):
+            finite_data = data[np.isfinite(data)]
+            if finite_data.size == 0:
+                ax.set_title(f"{title} (No finite values)")
+                continue
+            vmin, vmax = np.percentile(finite_data, [1, 99])
+            contour = ax.contourf(s_units, z_units, data, levels=100, cmap="viridis", vmin=vmin, vmax=vmax)
+            fig.colorbar(contour, ax=ax, label=title)
+            ax.set_xlabel(xlabel)
+            ax.set_ylabel(ylabel)
+            ax.set_title(title)
+
+        fig.suptitle("Jet Field Quantities", fontsize=16)
+        plt.show()
+
+    plot_field_panel(B_mag, E_mag, NEM_vals, GEM_vals, use_mas=False)
+test_flds( Xi_max=Xi_max, V_interp=V_interp, c=c, Phi_H=Phi_H, mH=mH, xi_grid=xi_grid, S=S, Z=Z, B_mag=B_mag, E_mag=E_mag, NEM_vals=NEM_vals, GEM_vals=GEM_vals, m2mas=m2mas)
+
+# stokes ode
+def stokes_ode_dynamic(z, y, s):
+    if not np.isfinite(z) or not np.all(np.isfinite(y)):
+        return [0.0, 0.0, 0.0, 0.0]
+    try: 
+        e = 1.602176634e-19       
+        v_vec = velocity_vector(s, z)
+        flds = compute_fields(s, z)
+        
+        B = flds["B"]
+        E = flds["E"]
+        psi = flds["psi"]
+        # Radiative transfer parameters needed
+        I, Q, U, V = y
+        cos2ψ = np.cos(2 * psi)
+        sin2ψ = np.sin(2 * psi)
+
+
+        # Observer Geometry
+        BX = B[0] * sin_theta + B[1] * cos_theta
+        BY = -B[0] * cos_theta + B[2] * sin_theta
+        EX = (E[0] * sin_theta + E[1] * cos_theta) / c
+        EY = (-E[0] * cos_theta + E[2] * sin_theta) / c
+        Bz = B[2]
+
+        # Be from projected E, B
+        Bmag_proj_sq = (BX + EY)**2 + (BY - EX)**2
+        Be = np.sqrt(max(Bmag_proj_sq, 0.0))  # Clamp negatives
+        Be_sq = (BX + EY)**2 + (BY - EX)**2
+        Be_safe = np.sqrt(max(Be_sq, 1e-20))
+
+        D = Doppler_factor_from_coords(s, z, theta)
+        if D < 1e-3 or not np.isfinite(D):
+            return [0.0, 0.0, 0.0, 0.0]
+
+        gamma_min = 10.0
+        gamma_max = 1e6
+        gamma_peak = max(D * gamma_min, gamma_min)
+
+        if p == 1.0:
+            PLCutoffFactor = 1.0 / np.log(gamma_max / gamma_min)
+        else:
+            PLCutoffFactor = 1.0 / (gamma_min**(1 - p) - gamma_max**(1 - p))
+
+        # Clamp to prevent overflow
+        Ps = gamma_peak**2 * Be**2
+        term1 = np.sqrt(3) * D**4 * Ps * nu_photon * re / (2 * c)
+        arg_term2 = (3 * e * Be_safe) / (2 * np.pi * me * nu_photon)
+        if arg_term2 <= 0 or not np.isfinite(arg_term2):
+            arg_term2 = 1e-20  # prevent log(0) or log(-)
+        log_term2 = 1.5 * np.log(arg_term2)
+        log_term2 = np.clip(log_term2, -100, 100)  # avoid overflow
+        term2 = np.exp(log_term2)       
+        term3 = GammaFn((3 * p - 1) / 12) * GammaFn((3 * p + 19) / 12) / (p + 1)
+        
+        print(f"[DEBUG] PLCutoffFactor = {PLCutoffFactor:.2e}")
+        print(f"[DEBUG] term1 = {term1:.2e}")
+        print(f"[DEBUG] term2 = {term2:.2e}")
+        print(f"[DEBUG] term3 = {term3:.2e}")
+        print(f"[DEBUG] jnu (pre-clip) = {PLCutoffFactor * term1 * term2 * term3:.2e}")
+        print(f"Be = {Be:.2e}, Bmag_proj_sq = {Bmag_proj_sq:.2e}")
+        print(f"[DEBUG] z={z:.2e}, Be={Be:.2e}, D={D:.2e}, term2={term2:.2e}")
+
+        jnu = PLCutoffFactor * term1 * term2 * term3
+        jnu = np.clip(jnu, 0.0, 1e10)
+        jV = 0.01 * jnu
+        Cj = (3 * (p + 1)) / (3 * p + 7)
+        Cchi = (3 * (p + 2)) / (3 * p + 10)
+        Bz_safe = max(np.abs(Bz), 1e-3)
+        nu_safe = max(nu_photon, 1e-5)
+        chi   = np.clip(0.1  * ne * Be_safe**2 / nu_safe**2, 0.0, 1e5)
+        chiV  = np.clip(0.05 * ne * Bz_safe     / nu_safe**2, 0.0, 1e5)
+        rhoFC = np.clip(0.01 * ne * Be_safe * Bz_safe / nu_safe**3, 0.0, 1e5)
+        rhoV  = np.clip(0.01 * ne * Be_safe * Bz_safe / nu_safe**3, 0.0, 1e5)
+
+        # === Radiative Transfer Equations ===
+        dI = jnu - chi * (I + Cchi * (cos2ψ * Q - sin2ψ * U)) - chiV * V
+        dQ = Cj * cos2ψ * jnu - chi * (Cchi * cos2ψ * I + Q) - rhoV * U - rhoFC * sin2ψ * V
+        dU = Cj * sin2ψ * jnu - chi * (-Cchi * sin2ψ * I + U) + rhoV * Q - rhoFC * cos2ψ * V
+        dV = jV - chiV * I + rhoFC * (sin2ψ * Q + cos2ψ * U) - chi * V
+
+        if not np.all(np.isfinite([dI, dQ, dU, dV])):
+            print(f"[BAD DERIVATIVES] z={z:.3e}, D={D:.2e}, Be={Be:.2e}, jnu={jnu:.2e}, term2={term2:.2e}")
+            return [0.0, 0.0, 0.0, 0.0]
+            
+        print(f"[DY] dI={dI:.2e}, dQ={dQ:.2e}, dU={dU:.2e}, dV={dV:.2e}")
+
+        return [dI, dQ, dU, dV]
+
+    except Exception as e:
+        print(f"[EXCEPTION] z={z:.2e}, s={s:.2e}, error: {e}")
+        return [0.0, 0.0, 0.0, 0.0]
+for iy in range(nY):
+    iY = iy + 1
+    Y = Y1**((nY - iY) / (nY - 1)) * Y3**((iY - 1) / (nY - 1))
+    Xmax_row[iy] = np.sqrt(xi_max * Y / sin_theta + 0.25 * xi_max**2 / tan_theta_sq)
+
+print(f"Running solve_pixel for ρV = {rhoV}")
+
+
+def solve_pixel(idx, rhoV):
+    iy, ix = idx
+    iY = iy + 1
+    s = s_grid[iy, ix]  
+    zmin = zeta_min_grid_vals[iy, ix]
+    zmax = zeta_max_grid_vals[iy, ix]
+
+    if (
+        zmin <= 0 or zmax <= 0
+        or zmin >= zmax
+        or not np.isfinite(zmin + zmax)
+        or np.iscomplex(zmin)
+        or np.iscomplex(zmax)
+    ):
+        return [np.nan, np.nan, 0, 0, 0, 0]
+    
+    # Recompute Y and Xmax
+    Y = Y1**((nY - iY) / (nY - 1)) * Y3**((iY - 1) / (nY - 1))
+    Xmax = np.sqrt(xi_max * Y / sin_theta + 0.25 * xi_max**2 / tan_theta_sq)
+    X = (ix - (nX - 1)/2) / ((nX - 1)/2) * Xmax
+
+    try:
+        y0 = [1e-6, 1e-6, 1e-6, 0]  # small but nonzero U
+        z_span = np.linspace(zmin, zmax, N)
+
+        sol = solve_ivp(
+            lambda z, y: stokes_ode_dynamic(z, y, s), [zmin, zmax], y0, method="RK45", 
+            rtol=1e-4, atol=1e-6, t_eval=z_span)
+
+        if sol.success:
+            if iy == nY//2 and ix == nX//2:
+                print(f"[MIDPIX] Final Stokes: I={I:.2e}, Q={Q:.2e}, U={U:.2e}, V={V:.2e}")
+
+            I, Q, U, V = sol.y[:, -1]
+            if np.isfinite(I + Q + U + V):
+                return [zmax, s, I2Jy * I, I2Jy * Q, I2Jy * U, I2Jy * V]
+
+    except Exception as e:
+        print(f"[ERROR] pixel ({iy}, {ix}) failed: {e}")
+    return [zmax, s, 0, 0, 0, 0]
+
+base_idxs = list(product(range(nY), range(nX)))
+print("[TEST] Sample output:", solve_pixel((nY//2, nX//2),rhoV=None))
+
+# Run full grid computation
+results = [solve_pixel((iy, ix), rhoV=None) for iy in range(nY) for ix in range(nX)]
+
+# Format into array
+results_arr = np.array(results).reshape((nY, nX, 6))
+
+# runs process in parallel but requires variables to be picklable
+#with ProcessPoolExecutor() as ex:
+#    results = list(ex.map(partial(solve_pixel, rhov=rhov), base_idxs, itertools.repeat(rhoV), chunksize=50))
+
+print("Completed integration.")
+
+# Extract Stokes parameters
+I_vals = results_arr[:, :, 2]
+Q_vals = results_arr[:, :, 3]
+U_vals = results_arr[:, :, 4]
+V_vals = results_arr[:, :, 5]
+
+def plot_stokes_component(component, label, cmap="magma"):
+    plt.figure(figsize=(10, 6))
+    plt.pcolormesh(S, Z, component, shading='auto', cmap=cmap)
+    plt.colorbar(label=label)
+    plt.xlabel("s (r_g)")
+    plt.ylabel("z (r_g)")
+    plt.title(f"{label} vs s and z")
+    plt.tight_layout()
+    plt.show()
+
+plot_stokes_component(I_vals, "Stokes I (Jy)")
+plot_stokes_component(Q_vals, "Stokes Q (Jy)")
+plot_stokes_component(U_vals, "Stokes U (Jy)")
+plot_stokes_component(V_vals, "Stokes V (Jy)")
+
+def plot_brightness_map(I_vals, s_grid, z_grid_vals, cmap='magma', title='Jet Brightness Map'):
+    # Use min/max from grid values
+    s_min = np.nanmin(s_grid)
+    s_max = np.nanmax(s_grid)
+    z_min = np.nanmin(z_grid_vals)
+    z_max = np.nanmax(z_grid_vals)
+
+    I_display = np.rot90(I_vals, k=1)
+
+    plt.figure(figsize=(12, 8))
+    img = plt.imshow(I_display, origin='lower', cmap=cmap, interpolation='none',
+                     aspect='auto', extent=[s_min, s_max, z_min, z_max])
+
+    plt.title(title)
+    plt.xlabel("s (transverse) [r_g]")
+    plt.ylabel("z (jet axis) [r_g]")
+    cbar = plt.colorbar(img, orientation='horizontal', pad=0.1)
+    cbar.set_label("Stokes I (Jy)")
+    plt.tight_layout()
+    plt.show()
+plot_brightness_map(I_vals, s_grid, z_grid_vals)
+
+def plot_polarization_vectors(I_vals, Q_vals, U_vals, axion_val=0.0, pixel_scale=1.0, scale_factor=0.01):
+
+    # Rotate 90 degrees clockwise for viewing
+    I_vals = I_vals, k=1
+    Q_vals = Q_vals, k=1
+    U_vals = U_vals, k=1
+    nY, nX = I_vals.shape 
+
+    # === Coordinate grid (centered pixel locations) ===
+    x = np.arange(nX) * pixel_scale
+    y = np.arange(nY) * pixel_scale
+    X_grid, Y_grid = np.meshgrid(x, y)
+
+    # === Polarization magnitude and angle ===
+    PolMag = np.sqrt(Q_vals**2 + U_vals**2)
+    PolAng = 0.5 * np.arctan2(U_vals, Q_vals)  # radians
+
+    # === Unit vectors for quiver ===
+    Uvec = np.cos(PolAng)
+    Vvec = np.sin(PolAng)
+
+    # check the range
+    print("Q range:", np.min(Q_vals), np.max(Q_vals))
+    print("U range:", np.min(U_vals), np.max(U_vals))
+    print("Polarization magnitude range:", np.min(PolMag), np.max(PolMag))
+
+    # === Plot ===
+    fig, ax = plt.subplots(figsize=(12, 6))
+    # Background intensity (log scale)
+    im = ax.contourf(X_grid, Y_grid, np.log10(np.abs(I_vals) + 1e-30), cmap='magma', levels=30)
+    # Quiver: polarization vectors
+    ax.quiver(X_grid, Y_grid, Uvec, Vvec, scale=1/scale_factor, color='cyan', 
+              width=0.0025, headwidth=0, headlength=0, headaxislength=0)
+    # Colorbar
+    cbar = plt.colorbar(im, ax=ax, orientation='horizontal', pad=0.05)
+    cbar.set_label(r"$\log_{10}(I_{\nu\Omega}~[\mathrm{Jy}])$")
+
+    # Optional: vector scale legend (cosmetic, not physically scaled)
+    ax.plot([x[-10], x[-10] + scale_factor], [y[2], y[2]], 'cyan', lw=2)
+    ax.text(x[-10], y[2] + 0.5, '0', color='white')
+    ax.text(x[-10] + scale_factor, y[2] + 0.5, '1', color='white')
+
+    ax.set_xlabel("Y pixel")
+    ax.set_ylabel("X pixel")
+    ax.set_ylim(0, 15)
+    ax.set_title(f"Polarization Vectors")
+    ax.set_aspect('equal')
+    plt.tight_layout()
+    plt.show()
+
+plot_polarization_vectors(I_vals, Q_vals, U_vals)

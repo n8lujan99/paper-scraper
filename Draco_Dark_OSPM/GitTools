@@ -1,0 +1,71 @@
+#!/bin/bash
+# ============================================
+# git_tools.sh - Handy Git shortcuts
+#
+# Commands:
+#   pull         Pull and update from GitHub
+#   push [msg]   Add, commit, and push changes (default msg: "update: changes pushed")
+#   status       Show repo status (short format)
+#   diff         Show unstaged/staged differences
+#   new <name>   Create and switch to a new branch
+#   switch <name> Switch to an existing branch
+#   sync         Merge latest main into current branch
+# ============================================
+
+set -e
+
+CMD=$1
+shift || true  # remove the first arg so $@ is left for commit msg or branch name
+
+case "$CMD" in
+  pull)
+    echo "Fetching and pulling latest changes..."
+    git fetch origin
+    git pull origin "$(git rev-parse --abbrev-ref HEAD)"
+    ;;
+
+  push)
+    COMMIT_MSG=${1:-"update: changes pushed"}
+    echo "Adding changes..."
+    git add .
+    echo "Committing with message: $COMMIT_MSG"
+    git commit -m "$COMMIT_MSG" || echo "No changes to commit."
+    echo "Pushing to branch..."
+    git push origin "$(git rev-parse --abbrev-ref HEAD)"
+    ;;
+
+  status)
+    git status -sb
+    ;;
+
+  diff)
+    git diff
+    ;;
+
+  new)
+    if [ -z "$1" ]; then
+      echo "Usage: $0 new <branch-name>"
+      exit 1
+    fi
+    git checkout -b "$1"
+    ;;
+
+  switch)
+    if [ -z "$1" ]; then
+      echo "Usage: $0 switch <branch-name>"
+      exit 1
+    fi
+    git checkout "$1"
+    ;;
+
+  sync)
+    git fetch origin
+    git merge origin/main
+    ;;
+
+  *)
+    echo "Unknown command: $CMD"
+    echo "Usage: $0 {pull|push|status|diff|new|switch|sync}"
+    exit 1
+    ;;
+esac

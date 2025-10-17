@@ -1,0 +1,19 @@
+#!/bin/bash
+# Push changes to GitHub
+
+# Fail immediately if a command errors
+set -e
+
+# Use first argument as commit message, or fallback
+COMMIT_MSG=${1:-"update: changes pushed"}
+
+echo "Adding all changes..."
+git add .
+
+echo "Committing with message: $COMMIT_MSG"
+git commit -m "$COMMIT_MSG"
+
+echo "Pushing to current branch..."
+git push origin "$(git rev-parse --abbrev-ref HEAD)"
+
+echo "Changes pushed successfully."
