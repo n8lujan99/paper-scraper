@@ -1,8 +1,6 @@
 # Binning conversions for OSPM
 
 import numpy as np
-import pandas as pd
-
 
 def IRneeR(r, a, b, cval):
     """Converts physical radius r (on [0,1]) into radial bin index ir."""

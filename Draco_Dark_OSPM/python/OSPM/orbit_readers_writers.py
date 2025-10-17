@@ -480,3 +480,47 @@ def write_totml
     pass
 
 
+###################################################################################
+# Checkers / Filters
+###################################################################################
+
+def drop_orbits(w, wphase, Cm, Norbit, Norbito, Norbitm, newcmatrix_func, tiny=1e-30):
+    """Filters out negative weights by setting them to small values."""
+    iorbiter = np.arange(Norbitm, dtype=int)
+    iorb = 0
+
+    while iorb < Norbit:
+        if w[iorb] <= tiny:
+            # keep pulling last orbit until a non-tiny one remains
+            while w[Norbit - 1] <= tiny and Norbit > 1:
+                Norbit -= 1
+
+            # swap with last active orbit
+            if iorb < Norbit - 1:
+                w[iorb], w[Norbit - 1] = w[Norbit - 1], 0.0
+                wphase[iorb], wphase[Norbit - 1] = wphase[Norbit - 1], wphase[iorb]
+
+                # update orbit index mapping
+                iorbiter[iorb], iorbiter[Norbit - 1] = Norbit - 1, iorb
+
+                # rebuild matrix column
+                newcmatrix_func(iorb)
+
+                print(f"Dropped orbit {iorb+1:5d} {Norbit:5d} {Norbito:5d}")
+
+        iorb += 1
+
+    return w, wphase, Cm, Norbit, iorbiter
+
+###################################################################################
+# Plotting / Visualization
+###################################################################################
+
+def plot_all():
+    pass
+
+def plot_all2():
+    pass
+
+def plot_libsos():
+    pass
