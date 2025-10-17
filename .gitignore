@@ -1,0 +1,11 @@
+# local secrets
+config.yaml
+.env
+
+# virtual environments
+venv/
+.envrc
+
+# cache and compiled files
+__pycache__/
+*.pyc
